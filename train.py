@@ -44,7 +44,7 @@ parser.add_argument('--eval', type=int, default=0)
 parser.add_argument('--verbose_data', type=int, default=0)
 parser.add_argument('--verbose_model', type=int, default=0)
 
-parser.add_argument('--n_instance', type=int, default=0)
+parser.add_argument('--n_instance', type=int, default=0) ### an instance is an object. E.g. for fluid shake, instance is water + glass.
 parser.add_argument('--n_stages', type=int, default=0)
 parser.add_argument('--n_his', type=int, default=0)
 
@@ -274,7 +274,7 @@ for epoch in range(st_epoch, args.n_epoch):
         losses = 0.
         for i, data in enumerate(dataloaders[phase]):
 
-            attr, state, rels, n_particles, n_shapes, instance_idx, label = data
+            attr, state, rels, n_particles, n_shapes, instance_idx, label = data 
             Ra, node_r_idx, node_s_idx, pstep = rels[3], rels[4], rels[5], rels[6]
 
             Rr, Rs = [], []

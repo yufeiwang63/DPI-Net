@@ -44,6 +44,9 @@ def load_data(data_names, path):
 
 
 def combine_stat(stat_0, stat_1):
+    '''
+    state_i: mean, std, count
+    '''
     mean_0, std_0, n_0 = stat_0[:, 0], stat_0[:, 1], stat_0[:, 2]
     mean_1, std_1, n_1 = stat_1[:, 0], stat_1[:, 1], stat_1[:, 2]
 
@@ -127,7 +130,7 @@ def gen_PyFleX(info):
 
     env_idx = info['env_idx']
 
-    np.random.seed(round(time.time() * 1000 + thread_idx) % 2**32)
+    np.random.seed(round(time.time() * 1000 + thread_idx) % 2**32) ### NOTE: we might want to fix the seed for reproduction
 
     # positions, velocities
     if env_idx == 5:    # RiceGrip
@@ -292,6 +295,7 @@ def gen_PyFleX(info):
 
                 pyflex.step()
 
+                # NOTE: 1) particle + glass wall positions, 2) particle + glass wall velocitys, 3) glass wall rotations, 4) scenen parameters
                 data = [positions[j], velocities[j], shape_quats[j], scene_params]
                 store_data(data_names, data, os.path.join(rollout_dir, str(j) + '.h5'))
 
@@ -374,6 +378,7 @@ def gen_PyFleX(info):
         # only normalize positions and velocities
         datas = [positions.astype(np.float64), velocities.astype(np.float64)]
 
+        # NOTE: stats is of length 2, for positions and velocities
         for j in range(len(stats)):
             stat = init_stat(stats[j].shape[0])
             stat[:, 0] = np.mean(datas[j], axis=(0, 1))[:]
@@ -399,6 +404,10 @@ def visualize_neighbors(anchors, queries, idx, neighbors):
 
 
 def find_relations_neighbor(positions, query_idx, anchor_idx, radius, order, var=False):
+    '''
+    For points in query_idx, find all points in anchor_idx such that their distances are 
+    smaller than radius.
+    '''
     if np.sum(anchor_idx) == 0:
         return []
 
@@ -644,24 +653,27 @@ def prepare_input(data, stat, args, phases_dict, verbose=0, var=False):
             rels += [np.stack([nodes, gripper, np.ones(nodes.shape[0])], axis=1)]
 
     elif args.env == 'FluidShake':
+        # connect each water particle to the wall particle if their distance is smaller than 0.1
         for i in range(n_shapes):
-            attr[n_particles + i, 1 + i] = 1
+            # object attr:
+            # [fluid, wall_0, wall_1, wall_2, wall_3, wall_4]
+            attr[n_particles + i, 1 + i] = 1 
 
             pos = positions.data.cpu().numpy() if var else positions
             if i == 0:
-                # floor
+                # floor, y distance (In Flex, coordinates are x,y,z (0, 1, 2) of position)
                 dis = pos[:n_particles, 1] - pos[n_particles + i, 1]
             elif i == 1:
-                # left
+                # left, x distance
                 dis = pos[:n_particles, 0] - pos[n_particles + i, 0]
             elif i == 2:
-                # right
+                # right, x distance
                 dis = pos[n_particles + i, 0] - pos[:n_particles, 0]
             elif i == 3:
-                # back
+                # back, z distance
                 dis = pos[:n_particles, 2] - pos[n_particles + i, 2]
             elif i == 4:
-                # front
+                # front, z distance
                 dis = pos[n_particles + i, 2] - pos[:n_particles, 2]
             else:
                 raise AssertionError("more shapes than expected")
@@ -672,7 +684,7 @@ def prepare_input(data, stat, args, phases_dict, verbose=0, var=False):
                 print(np.sort(dis)[:10])
 
             wall = np.ones(nodes.shape[0], dtype=np.int) * (n_particles + i)
-            rels += [np.stack([nodes, wall, np.ones(nodes.shape[0])], axis=1)]
+            rels += [np.stack([nodes, wall, np.ones(nodes.shape[0])], axis=1)] #NOTE: what does the 1 mean?
 
     if verbose and len(rels) > 0:
         print(np.concatenate(rels, 0).shape)
@@ -697,6 +709,8 @@ def prepare_input(data, stat, args, phases_dict, verbose=0, var=False):
                 raise AssertionError("Unsupported materials")
 
         elif args.env == 'FluidFall' or args.env == 'RiceGrip' or args.env == 'FluidShake':
+            # FluidShake object attr:
+            # [fluid, wall_0, wall_1, wall_2, wall_3, wall_4]
             if phases_dict['material'][i] == 'fluid':
                 attr[st:ed, 0] = 1
                 queries = np.arange(st, ed)
@@ -721,11 +735,11 @@ def prepare_input(data, stat, args, phases_dict, verbose=0, var=False):
     if rels.shape[0] > 0:
         if verbose:
             print("Relations neighbor", rels.shape)
-        Rr_idxs.append(torch.LongTensor([rels[:, 0], np.arange(rels.shape[0])]))
+        Rr_idxs.append(torch.LongTensor([rels[:, 0], np.arange(rels.shape[0])])) # NOTE: why with the np.arange(rels.shape)
         Rs_idxs.append(torch.LongTensor([rels[:, 1], np.arange(rels.shape[0])]))
         Ra = np.zeros((rels.shape[0], args.relation_dim))
-        Ras.append(torch.FloatTensor(Ra))
-        values.append(torch.FloatTensor([1] * rels.shape[0]))
+        Ras.append(torch.FloatTensor(Ra)) # NOTE: why Ras are just 0? 
+        values.append(torch.FloatTensor([1] * rels.shape[0])) # NOTE: why values are just 1?
         node_r_idxs.append(np.arange(n_particles))
         node_s_idxs.append(np.arange(n_particles + n_shapes))
         psteps.append(args.pstep)
@@ -898,6 +912,7 @@ class PhysicsFleXDataset(Dataset):
         print("Training data generated, warpping up stats ...")
 
         if self.phase == 'train' and self.args.gen_stat:
+            # store stats (mean, std, count) for position and velocity data
             # positions [x, y, z], velocities[xdot, ydot, zdot]
             if self.args.env == 'RiceGrip':
                 self.stat = [init_stat(6), init_stat(6)]
@@ -938,7 +953,7 @@ class PhysicsFleXDataset(Dataset):
         ### label
         data_nxt = normalize(load_data(self.data_names, data_nxt_path), self.stat)
 
-        label = torch.FloatTensor(data_nxt[1][:n_particles])
+        label = torch.FloatTensor(data_nxt[1][:n_particles]) # NOTE: just use velocity at next step as label
 
         return attr, state, relations, n_particles, n_shapes, instance_idx, label
 
